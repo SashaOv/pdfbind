@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+# Poetry
+/poetry.lock
+/dist/
+.venv/
+# VSCode
+.vscode/
+# Custom project
+/work/
