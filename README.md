@@ -1,6 +1,6 @@
 # PDF Bind
 
-This is a simple script to combine multiple PDFs into a single one. 
+This is a simple script to combine multiple PDFs into a single one and to create outline with each file being a chapter. 
 It uses excellent [pikepdf](https://github.com/pikepdf/pikepdf) library to handle the PDFs.
 
 ## Installation
@@ -30,6 +30,27 @@ poetry install
 ```bash
 poetry build
 ```
+
+## How to use
+
+### 1 Create a layout file
+
+For example, `favorites.yaml`:
+
+```yaml
+- file: favorite-tunes/Giant Steps.pdf
+- file: favorite-tunes/lennies.pdf
+  title: Lennie's Pennies
+```
+
+### Run the command
+
+```bash
+pdfbind favorites.yaml
+```
+
+The command will create `favorites.pdf` in the same directory as the layout file.
+
 
 ## License
 
