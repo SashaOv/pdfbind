@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "pdfcomposer"
+name = "pdfbind"
 version = "0.1.0"
 description = ""
 authors = ["Sasha Ovsankin <sasha@ovsankin.com>"]

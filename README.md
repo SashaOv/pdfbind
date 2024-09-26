@@ -49,7 +49,7 @@ For example, `favorites.yaml`:
 pdfbind favorites.yaml
 ```
 
-The command will create `favorites.pdf` in the same directory as the layout file.
+This command will create `favorites.pdf` in the same directory as the layout file.
 
 
 ## License
