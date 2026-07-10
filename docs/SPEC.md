@@ -1,95 +1,119 @@
 # Tunery
-**Goal**: build a single printable PDF “setbook” (setlist booklet) by stitching together pages from a collection of existing sheet-music PDFs.
+
+**Goal:** Build a printable PDF setbook by stitching together pages from
+existing sheet-music PDFs.
 
 ## Concepts
 
 ### Layout
-References charts either by explicit file path or by title, resolved via file lookup and/or index.
 
-### Index
-Is a local SQLite index of chart titles → (PDF file, page, page-count), built from a set of existing files (books).
+A layout is an ordered YAML description of charts and nested sections in an
+output setbook. A chart can name a PDF file or a tune title.
 
 ### Library
-A set of tunes. Types of libraries:
 
-- Directory. A tune is searched by file name $tune_name.pdf
-- Indexed PDF: a PDF file + JSON index which maps tunes to pages in file.
-- Collection of indexed PDFs
+A Library is a searchable collection of tunes. A successful lookup returns the
+source PDF, canonical title, starting page, and page count.
 
-Search in library could be **exact**, by exact name, or **fuzzy**, using fuzzy search algorithms.
+Tunery supports:
 
+- **Directory libraries:** standalone PDFs whose filenames provide tune titles.
+- **Indexed PDF libraries:** one source PDF plus a JSON mapping from tune titles
+  to page ranges.
+- **Library collections:** ordered directory and indexed PDF libraries searched
+  as one collection.
+
+Each library uses either normalized exact matching or exact-then-fuzzy
+matching.
 
 ## Deployable
-`tunery` — CLI
 
-`tunery` — Python package API
+`tunery` is both a CLI and a Python package.
 
-Usage: `tunery COMMAND ...`
+### CLI
 
-Commands:
-- **index** `INDEX_JSON` — build the SQLite index at `~/.cache/tunery/index.sqlite`
-  - `INDEX_JSON` is the path to the main `index.json` file (format below).
-- **render** `LAYOUT_YAML` `[-o OUTPUT_PDF] [--index INDEX_SQLITE] [--override DIR]` — build a combined PDF from a layout file.
-  - `-o/--output`: default is `<layout_basename>.pdf` next to the YAML.
-  - `--index`: path to SQLite index (default `~/.cache/tunery/index.sqlite`). If missing/unavailable, title-based lookups can still succeed via overrides.
-  - `--override`: directory with PDFs that should take precedence for `title:` lookups.
-- **lookup** `TITLE_PART` - lookup a title in the index and if found, 
-  generate a single PDF with the title (as found in the source).
-  - `-o/--output`: if file, use this file path, if directory, put `<found_title>.pdf` in that directory, default is `<layout_basename>.pdf` in current directory.
+- **render** `LAYOUT_YAML [-o OUTPUT_PDF]` builds a setbook. The default output
+  is `<layout_basename>.pdf` next to the layout.
+- **lookup** `TITLE... [-o OUTPUT]` extracts requested titles. If `OUTPUT` is a
+  directory, Tunery writes `<canonical_title>.pdf` inside it. If it is a file,
+  Tunery uses it as-is. The default is
+  `<canonical_title>.pdf` in the current directory.
 
-Python API:
-- Import `Composer` from the package root: `from tunery import Composer`.
-- Construct `Composer(output_path)` to create a programmatic setbook builder.
-- Call `add(title, source, start=None, pages=None)` to append pages from an explicit PDF source. `start` uses the same page-numbering behavior as layout `page`; `pages` uses the same behavior as layout `length`. If both are omitted, include the whole PDF.
-- Call `start_section(title)` and `end_section()` to group subsequent additions under nested outline bookmarks.
-- Save the output PDF after additions and section changes. Use `close()` or a context manager to release the underlying PDF object.
+### Python API
+
+- Import `Composer`, `DirectoryLibrary`, `IndexedPdfLibrary`, `Library`,
+  and `LibraryCollection` from the package root.
+- Construct `Composer(output_path)` to build a setbook programmatically.
+- Call `add(title, source, start=None, pages=None)` to append pages from a PDF.
+- Call `start_section(title)` and `end_section()` to create nested outline
+  sections.
+- Save the output after additions. Use `close()` or a context manager to
+  release the PDF.
 
 ## Configuration / Inputs
 
-### Main index (`index.json`)
-JSON file containing an array of **book entries**:
+### Project configuration
 
-```json
-[
-  {
-    "source": "Books/RealBook.pdf",
-    "index": "Indexes/realbook.json",
-    "shift": 0
-  }
-]
-```
-
-Fields:
-- **source** (required): path to the source PDF, relative to `index.json`.
-- **index** (required): path to the per-book index JSON file, relative to `index.json`.
-- **shift** (optional): integer page offset added to every entry’s `page` from the per-book index.
-- **title / edition / volume** (optional): accepted but currently not used by the implementation.
-
-### Per-book index JSON
-Each referenced `index` file is a JSON array of entries:
-
-```json
-[
-  {"title": "Autumn Leaves", "page": 39},
-  {"title": "Song B", "page": 20, "pages": 2}
-]
-```
-
-Fields:
-- **title** (required): chart title.
-- **page** (required, 1-based): page label/number where the chart starts.
-- **pages** (optional, default 1): number of pages to include for the chart.
-
-### Layout YAML (render input)
-YAML file containing a list of records. Records can be:
-
-- **Config record** (sets override directory; takes precedence over `--override`):
+The project configuration file is named `tunery.yaml`. It contains an ordered
+list of library records:
 
 ```yaml
-- override: ../../Handouts
+- library: indexes/real-book.json
+  match: fuzzy
+- library: handouts
+  match: exact
 ```
 
-- **Flat file record** (one item in the PDF outline):
+Fields:
+
+- **library** (required): a directory or indexed PDF JSON file.
+- **match** (optional): `exact` or `fuzzy`; defaults to `exact`.
+
+Resolve library paths relative to the directory containing `tunery.yaml`.
+
+### Indexed PDF library
+
+An indexed PDF library is a self-contained JSON object:
+
+```json
+{
+  "source": "../books/Real Book.pdf",
+  "shift": 0,
+  "tunes": [
+    {"title": "Autumn Leaves", "page": 39},
+    {"title": "Song B", "page": 20, "pages": 2}
+  ]
+}
+```
+
+Fields:
+
+- **source** (required): source PDF path, resolved relative to the JSON file.
+- **shift** (optional): integer added to every tune page; defaults to `0`.
+- **tunes** (required): indexed tune records.
+- **title** (required per tune): canonical tune title.
+- **page** (required per tune): positive starting page.
+- **pages** (optional per tune): positive page count; defaults to `1`.
+
+Tunery reads this JSON directly when loading the library.
+
+### Layout YAML
+
+A layout is a list containing config, chart, and section records.
+
+A config record adds libraries after the project libraries:
+
+```yaml
+- config:
+    - library: ../../handouts
+      match: exact
+    - library: ../../indexes/real-book.json
+      match: fuzzy
+```
+
+Resolve layout library paths relative to the layout file.
+
+A chart record names a file, a title, or both:
 
 ```yaml
 - file: Songbook.pdf
@@ -99,63 +123,93 @@ YAML file containing a list of records. Records can be:
   notes: "Watch ending — fermata on bar 32"
 ```
 
-- **Section record** (creates a section bookmark with nested child bookmarks):
+Chart fields:
+
+- **file** (optional): PDF path or filename. Either `file` or `title` is
+  required.
+- **title** (optional): display title and title lookup key.
+- **page** (optional): positive starting page.
+- **length** (optional): positive page count.
+- **notes** (optional): text drawn at the bottom of every included page.
+
+A section creates a nested PDF outline:
 
 ```yaml
 - section: Set 1
   body:
-    - title: Country           # resolved via overrides/index
-    - file: Groove.pdf         # explicit file
+    - title: Country
+    - file: Groove.pdf
       title: Groove Standard
-    - section: Medley          # nested subsection
+    - section: Medley
       body:
         - title: Song A
         - title: Song B
 ```
 
-Sections can be nested arbitrarily deep. Each section creates an outline (bookmark) node with its body items as children.
-
-Fields for a file record:
-- **file** (optional): PDF path (absolute, or relative to the YAML file directory).
-- **title** (optional): display title and/or lookup key. Either `file` or `title` must be present.
-- **page** (optional): start page (see “Page numbering” below).
-- **length** (optional): number of pages to include. If omitted and `page` is set, defaults to 1. If both `page` and `length` are omitted, the whole PDF is included.
-- **notes** (optional): if present, notes are drawn at the bottom of every included page.
+Sections can nest to any depth and may be empty.
 
 ## Behavior
 
-### Index building
-- Builds `~/.cache/tunery/index.sqlite` (overwriting any existing DB).
-- Resolves each book `source` to an absolute path and stores it in the DB.
-- Titles are stored normalized to **lowercase** for case-insensitive matching.
-- **Priority**: later book entries in `index.json` have higher priority; exact lookups return the highest-priority match.
-- Prints a short summary (`Indexed <n> charts...`) and lists duplicate titles (case-insensitive).
-- Missing/malformed per-book index files or missing source PDFs are skipped with a printed warning.
+### Configuration discovery
 
-### Rendering / lookup rules
-For each layout entry:
-- If **`file:` is present**, it is used directly (no index lookup).
-- If **only `title:` is present**, resolution is:
-  - **Override directory first**:
-    - Default override dir is the layout YAML directory (so “handout PDFs next to the YAML” win by default).
-    - If `override:` config record exists or `--override` is passed, that directory is used instead.
-    - Matching order: exact `<title>.pdf`, then case-insensitive filename match, then fuzzy filename match.
-  - **Index lookup second** (only if an index file exists at `--index`):
-    - Exact match is case-insensitive.
-    - If exact fails, fuzzy match is attempted (weighted ratio combining multiple strategies; normalization: lowercase, punctuation removed, whitespace normalized).
-    - If a title exists in multiple PDFs, Tunery uses the source PDF that comes later in `index.json` (higher priority).
-- If no match is found, Tunery prints a “not found … is this …?” hint (based on fuzzy matching) and skips the entry (render continues).
+For `render`, search for `tunery.yaml` starting in the layout directory and
+then through at most eight parent directories. For commands without a layout,
+start from the current working directory. Use the first configuration found;
+do not merge project configurations.
+
+If no project configuration exists, print
+`Project configuration was not found, using defaults` and use the starting
+directory as a directory library.
+
+### Lookup precedence and matching
+
+Load project libraries first, followed by layout libraries in record order.
+Search from last to first, so later libraries have higher priority.
+
+For `title:` entries and the `lookup` command:
+
+1. Try each library in priority order.
+2. Normalize exact matches by lowercasing, removing punctuation, and collapsing
+   whitespace.
+3. If a library uses `fuzzy` matching and exact matching fails, try fuzzy
+   title matching.
+4. Return the first matching library result.
+
+For `file:` entries, search directory libraries in the same priority order.
+Indexed PDF libraries do not participate in file lookup. If no directory
+library resolves the file, resolve it relative to the layout.
+
+Directory title lookup considers PDFs directly inside the library directory.
+Indexed PDF lookup preserves the indexed page range and applies `shift` to the
+starting page.
+
+### Rendering and lookup
+
+Rendering processes layout records in order, adds bookmarks for charts and
+sections, and prints a visible result for each chart. An unresolved title prints
+`not found "<title>"`, skips that chart, and continues rendering.
+
+`lookup` prints the discovered source and extracts the matched page range. An
+unresolved title prints `No matches found for "<title>"` and creates no file.
 
 ### Page numbering
-When `page` is specified for extraction, Tunery first tries to interpret it as a **PDF page label** (for decimal page-label ranges), and maps it to a physical 0-based page index. If no label mapping exists (or the label isn’t found), it falls back to treating `page` as a 1-based physical page index. (Any per-book `shift` is applied when building the SQLite index.)
+
+When `page` is set, first interpret it as a decimal PDF page label. If the
+label is unavailable, treat it as a 1-based physical page number. If `length`
+is omitted while `page` is set, include one page. If both are omitted, include
+the whole PDF.
 
 ### Output
-- Produces a single PDF at `OUTPUT_PDF`.
-- Adds a PDF outline (bookmarks):
-  - flat entries become top-level outline items.
-  - sections become top-level outline items with children pointing to the first included page of each body entry.
-  - empty sections are allowed (their destination defaults to page 0).
+
+- Produce one combined PDF for `render`.
+- Add top-level bookmarks for flat chart entries.
+- Add nested bookmarks for sections and their bodies.
+- Point an empty section at page 0.
 
 ### Errors
-- YAML parsing errors are raised as `ValueError` including file path and (when available) line/column.
-- Schema validation errors (wrong record shapes/fields) are raised as `ValueError` with formatted validation details.
+
+- Raise visible errors for missing library paths, malformed configuration,
+  malformed indexed PDF JSON, missing source PDFs, and invalid page ranges.
+- Include the layout path and available line/column information in YAML parsing
+  errors.
+- Include the layout path in schema validation errors.

@@ -171,7 +171,7 @@ override workflows disappear from the CLI, runtime, and documentation.
   output-path and multiple-title behavior. Verify CLI, library, and render tests
   plus a repository scan for runtime SQLite references. Keep at least one lookup
   title required instead of exposing the CLI framework's empty-list option.
-- [ ] **P3 — Document the library-only workflow.** Update the README and root
+- [x] **P3 — Document the library-only workflow.** Update the README and root
   spec with `tunery.yaml`, layout library records, lookup precedence, and direct
   JSON-index loading; remove database-building instructions. Run the full
   acceptance check.
