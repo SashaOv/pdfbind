@@ -296,18 +296,12 @@ def test_bind_pdf_handles_empty_section(tmp_path: Path) -> None:
             assert outline_page_index(merged, root_items[1]) == 0
 
 
-def test_render_prefers_layout_dir_overrides_over_index(tmp_path: Path) -> None:
-    """
-    If a layout entry uses `title:` (no explicit `file:`), and a matching PDF exists
-    next to the YAML, it should be used instead of the global index.
-    """
+def test_render_prefers_layout_library_over_index(tmp_path: Path) -> None:
     layout_dir = tmp_path / "setlist"
     layout_dir.mkdir()
 
-    # Local override: 1 page
     create_pdf(layout_dir / "Country.pdf", 1)
 
-    # Indexed source: 3 pages, and index points at pages 2-3 (length 2)
     books_dir = tmp_path / "books"
     books_dir.mkdir()
     create_pdf(books_dir / "RealBook.pdf", 3)
@@ -327,33 +321,29 @@ def test_render_prefers_layout_dir_overrides_over_index(tmp_path: Path) -> None:
     index_path = tmp_path / "index.sqlite"
     Index.build(tmp_path / "index.json", index_path).close()
 
-    layout_path = write_layout(layout_dir / "combo.yaml", [{"title": "Country"}])
+    layout_path = write_layout(
+        layout_dir / "combo.yaml",
+        [
+            {"config": [{"library": ".", "match": "exact"}]},
+            {"title": "Country"},
+        ],
+    )
     output_path = layout_dir / "combined.pdf"
 
     render(layout_path, output_path, index_path=index_path)
 
-    # If the override is used, we should have copied 1 page (default page=1, length=1).
-    # If the index is used, we'd copy 2 pages (page=2, length=2).
     with pikepdf.Pdf.open(output_path) as merged:
         assert len(merged.pages) == 1
 
 
-def test_render_override_dir_overrides_index(tmp_path: Path) -> None:
-    """
-    If an explicit override_dir is provided, it should override the index.
-
-    This is the intended meaning of "override": local/override PDFs take
-    precedence over indexed songbooks for `title:` entries.
-    """
+def test_render_later_layout_library_takes_priority_over_index(tmp_path: Path) -> None:
     layout_dir = tmp_path / "setlist"
     layout_dir.mkdir()
 
-    # Explicit override directory (not the layout directory): 1 page.
-    overrides_dir = tmp_path / "overrides"
-    overrides_dir.mkdir()
-    create_pdf(overrides_dir / "Country.pdf", 1)
+    handouts_dir = tmp_path / "handouts"
+    handouts_dir.mkdir()
+    create_pdf(handouts_dir / "Country.pdf", 1)
 
-    # Indexed source: 3 pages, and index points at pages 2-3 (length 2)
     books_dir = tmp_path / "books"
     books_dir.mkdir()
     create_pdf(books_dir / "RealBook.pdf", 3)
@@ -373,29 +363,27 @@ def test_render_override_dir_overrides_index(tmp_path: Path) -> None:
     index_path = tmp_path / "index.sqlite"
     Index.build(tmp_path / "index.json", index_path).close()
 
-    layout_path = write_layout(layout_dir / "combo.yaml", [{"title": "Country"}])
+    layout_path = write_layout(
+        layout_dir / "combo.yaml",
+        [
+            {"config": [{"library": "../handouts", "match": "exact"}]},
+            {"title": "Country"},
+        ],
+    )
     output_path = layout_dir / "combined.pdf"
 
-    render(layout_path, output_path, index_path=index_path, override_dir=overrides_dir)
+    render(layout_path, output_path, index_path=index_path)
 
-    # If the override is used, we should have copied 1 page.
-    # If the index is used, we'd copy 2 pages (page=2, length=2).
     with pikepdf.Pdf.open(output_path) as merged:
         assert len(merged.pages) == 1
 
 
-def test_render_override_defaults_to_full_pdf(tmp_path: Path) -> None:
-    """
-    When an override PDF is selected via `title:` and no `page`/`length` is given,
-    we should include the full override PDF (not just the first page).
-    """
+def test_render_directory_library_defaults_to_full_pdf(tmp_path: Path) -> None:
     layout_dir = tmp_path / "setlist"
     layout_dir.mkdir()
 
-    # Multi-page local override
     create_pdf(layout_dir / "Country.pdf", 9)
 
-    # Also provide an index that would otherwise resolve "Country"
     books_dir = tmp_path / "books"
     books_dir.mkdir()
     create_pdf(books_dir / "RealBook.pdf", 3)
@@ -415,14 +403,26 @@ def test_render_override_defaults_to_full_pdf(tmp_path: Path) -> None:
     index_path = tmp_path / "index.sqlite"
     Index.build(tmp_path / "index.json", index_path).close()
 
-    layout_path = write_layout(layout_dir / "combo.yaml", [{"title": "Country"}])
+    layout_path = write_layout(
+        layout_dir / "combo.yaml",
+        [
+            {"config": [{"library": ".", "match": "exact"}]},
+            {"title": "Country"},
+        ],
+    )
     output_path = layout_dir / "combined.pdf"
 
     render(layout_path, output_path, index_path=index_path)
 
-    # Should include the whole override PDF (9 pages)
     with pikepdf.Pdf.open(output_path) as merged:
         assert len(merged.pages) == 9
+
+
+def test_render_rejects_legacy_override_record(tmp_path: Path) -> None:
+    layout_path = write_layout(tmp_path / "setlist.yaml", [{"override": "."}])
+
+    with pytest.raises(ValueError, match="Validation error"):
+        render(layout_path, tmp_path / "combined.pdf")
 
 
 def test_copy_pages_validates_ranges(tmp_path: Path) -> None:
@@ -623,8 +623,6 @@ def test_process_file_entry_returns_not_found_result(tmp_path: Path) -> None:
         default_dir=layout_dir,
         composer=composer,
         index=None,
-        override_dir=layout_dir,
-        layout_path=None,
     )
     composer.close()
 

@@ -1,13 +1,11 @@
 """PDF rendering logic for combining PDFs with table of contents."""
 
 from dataclasses import dataclass
-import re
 from pathlib import Path
 from typing import List
 
 import yaml
 from pydantic import BaseModel, Field, PositiveInt, RootModel, ValidationError
-from rapidfuzz import fuzz, process
 
 from tunery.composer import Composer
 from tunery.index import ChartMatch, Index
@@ -49,15 +47,7 @@ class ConfigEntry(BaseModel):
     config: list[LibraryRecord]
 
 
-class OverrideConfigEntry(BaseModel):
-    """Legacy configuration entry specifying an override directory."""
-
-    override: str
-
-
-class Layout(
-    RootModel[List[ConfigEntry | OverrideConfigEntry | SectionEntry | FileEntry]]
-):
+class Layout(RootModel[List[ConfigEntry | SectionEntry | FileEntry]]):
     """The complete layout schema - a list of config, sections, and/or file entries."""
 
     pass
@@ -116,8 +106,6 @@ def process_file_entry(
     default_dir: Path,
     composer: Composer,
     index: Index | None = None,
-    override_dir: Path | None = None,
-    layout_path: Path | None = None,
     libraries: LibraryCollection | None = None,
 ) -> ProcessEntryResult:
     """
@@ -126,8 +114,6 @@ def process_file_entry(
     Returns: SuccessResult on success, NotFoundResult if title not found
              (both subclasses of ProcessEntryResult).
     """
-    # Determine the input PDF path and page/length
-    input_pdf_path: Path | None = None
     source: str
     matched_title: str | None = None
     score: float | None = None
@@ -143,12 +129,10 @@ def process_file_entry(
         length = entry.length
         source = str(input_pdf_path.parent)
     else:
-        # Look up in the index by title
         if not entry.title:
             raise ValueError("Entry must have either 'file' or 'title'")
-        
-        title = entry.title
 
+        title = entry.title
         library_match = libraries.lookup_title(title) if libraries else None
         if library_match is not None:
             input_pdf_path = library_match.source
@@ -161,166 +145,24 @@ def process_file_entry(
                 matched_title = library_match.title
                 score = library_match.score
         else:
-            input_pdf_path = None
-        
-        # Check override directory first if specified
-        override_fuzzy_match: tuple[str, float] | None = None  # (matched_filename, score)
-        if input_pdf_path is not None:
-            pass
-        elif override_dir and override_dir.exists():
-            # Try exact match first
-            override_file = override_dir / f"{title}.pdf"
-            if not override_file.exists():
-                # Try case-insensitive match
-                title_lower = title.lower()
-                for pdf_file in override_dir.glob("*.pdf"):
-                    if pdf_file.stem.lower() == title_lower:
-                        override_file = pdf_file
-                        break
-                else:
-                    # No exact or case-insensitive match found, try fuzzy matching
-                    pdf_files = list(override_dir.glob("*.pdf"))
-                    if pdf_files:
-                        # Normalize title for fuzzy matching (same as index normalization)
-                        normalized_search = title.lower()
-                        normalized_search = re.sub(r'[^\w\s]', '', normalized_search)
-                        normalized_search = ' '.join(normalized_search.split())
-                        
-                        # Create mapping of normalized filenames to actual paths
-                        file_map = {}
-                        for pdf_file in pdf_files:
-                            normalized_name = pdf_file.stem.lower()
-                            normalized_name = re.sub(r'[^\w\s]', '', normalized_name)
-                            normalized_name = ' '.join(normalized_name.split())
-                            file_map[normalized_name] = pdf_file
-                        
-                        # Find best match
-                        matches = process.extract(
-                            normalized_search,
-                            file_map.keys(),
-                            scorer=fuzz.token_set_ratio,
-                            score_cutoff=90,
-                            limit=1,
-                        )
-                        if matches:
-                            matched_name, score, _ = matches[0]
-                            override_file = file_map[matched_name]
-                            # Store matched filename and score for status message
-                            override_fuzzy_match = (override_file.stem, score)
-                        else:
-                            override_file = None
-                    else:
-                        override_file = None
-            
-            if override_file and override_file.exists():
-                # Use override file, skip index lookup
-                input_pdf_path = override_file
-                # If the layout entry doesn't specify a range, include the whole
-                # override PDF by default. This is important for handouts where
-                # the local PDF is the authoritative source and may be multi-page.
-                page = entry.page
-                length = entry.length
-                # Get relative path for display
-                try:
-                    if layout_path:
-                        override_rel = override_file.relative_to(layout_path.parent)
-                        override_path = override_rel.parent
-                    else:
-                        override_path = override_file.parent
-                except ValueError:
-                    override_path = override_file.parent
-                
-                # Check if this was a fuzzy match
-                source = str(override_path)
-                if override_fuzzy_match is not None:
-                    matched_title, score = override_fuzzy_match
-            else:
-                # No override file found, fall back to index lookup
-                if index is None:
-                    # Check for fuzzy matches in override directory as hints
-                    fuzzy_hints = []
-                    if override_dir and override_dir.exists():
-                        pdf_files = list(override_dir.glob("*.pdf"))
-                        if pdf_files:
-                            normalized_search = title.lower()
-                            normalized_search = re.sub(r'[^\w\s]', '', normalized_search)
-                            normalized_search = ' '.join(normalized_search.split())
-                            file_map = {}
-                            for pdf_file in pdf_files:
-                                normalized_name = pdf_file.stem.lower()
-                                normalized_name = re.sub(r'[^\w\s]', '', normalized_name)
-                                normalized_name = ' '.join(normalized_name.split())
-                                file_map[normalized_name] = pdf_file
-                            matches = process.extract(
-                                normalized_search,
-                                file_map.keys(),
-                                scorer=fuzz.token_set_ratio,
-                                score_cutoff=70,  # Lower threshold for hints
-                                limit=1,
-                            )
-                            if matches:
-                                matched_name, score, _ = matches[0]
-                                fuzzy_hints.append(f'"{file_map[matched_name].stem}"')
-                    hint = f'Is this {fuzzy_hints[0]}?' if fuzzy_hints else None
-                    return NotFoundResult(title=title, hint=hint)
-
-                # Exact match (case-insensitive, highest priority wins)
-                location = index.lookup(title)
-                exact_match = location is not None
-                
-                # If exact match failed, try fuzzy matching
-                index_fuzzy_match_used: ChartMatch | None = None
-                if not location:
-                    fuzzy_matches = index.lookup_fuzzy_edit_distance(title, score_cutoff=90, limit=1)
-                    if fuzzy_matches:
-                        index_fuzzy_match_used = fuzzy_matches[0]
-                        location = index_fuzzy_match_used.location
-                
-                if not location:
-                    # Not found - get hints from fuzzy matches (even below threshold)
-                    fuzzy_matches = index.lookup_fuzzy_edit_distance(title, score_cutoff=70, limit=1)
-                    if fuzzy_matches:
-                        hint_match = fuzzy_matches[0]
-                        hint_title = hint_match.matched_title
-                        hint_source = Path(hint_match.location.source_path).stem
-                        hint = f'Is this "{hint_title}" in "{hint_source}"?'
-                    else:
-                        hint = None
-                    return NotFoundResult(title=title, hint=hint)
-
-                input_pdf_path = Path(location.source_path)
-                source = input_pdf_path.stem
-                if not exact_match:
-                    # index_fuzzy_match_used was set earlier and is not None
-                    assert index_fuzzy_match_used is not None
-                    matched_title = index_fuzzy_match_used.matched_title
-                    score = index_fuzzy_match_used.score
-                # Use entry's page/length if specified, otherwise use from index
-                page = entry.page if entry.page else location.page
-                length = entry.length if entry.length else location.length
-        else:
-            # No override directory, proceed with index lookup
             if index is None:
-                raise ValueError(
-                    f"Cannot look up '{title}': no index available. "
-                    "Run 'tunery index <dir>' first."
-                )
+                return NotFoundResult(title=title)
 
-            # Exact match (case-insensitive, highest priority wins)
             location = index.lookup(title)
             exact_match = location is not None
-            
-            # If exact match failed, try fuzzy matching
             index_fuzzy_match: ChartMatch | None = None
             if not location:
-                fuzzy_matches = index.lookup_fuzzy_edit_distance(title, score_cutoff=90, limit=1)
+                fuzzy_matches = index.lookup_fuzzy_edit_distance(
+                    title, score_cutoff=90, limit=1
+                )
                 if fuzzy_matches:
                     index_fuzzy_match = fuzzy_matches[0]
                     location = index_fuzzy_match.location
-            
+
             if not location:
-                # Not found - get hints from fuzzy matches (even below threshold)
-                fuzzy_matches = index.lookup_fuzzy_edit_distance(title, score_cutoff=70, limit=1)
+                fuzzy_matches = index.lookup_fuzzy_edit_distance(
+                    title, score_cutoff=70, limit=1
+                )
                 if fuzzy_matches:
                     hint_match = fuzzy_matches[0]
                     hint_title = hint_match.matched_title
@@ -333,15 +175,12 @@ def process_file_entry(
             input_pdf_path = Path(location.source_path)
             source = input_pdf_path.stem
             if not exact_match:
-                # index_fuzzy_match was set earlier and is not None
                 assert index_fuzzy_match is not None
                 matched_title = index_fuzzy_match.matched_title
                 score = index_fuzzy_match.score
-            # Use entry's page/length if specified, otherwise use from index
-            page = entry.page if entry.page else location.page
-            length = entry.length if entry.length else location.length
+            page = entry.page if entry.page is not None else location.page
+            length = entry.length if entry.length is not None else location.length
 
-    assert input_pdf_path is not None
     entry_page = composer.add(
         title=title,
         source=input_pdf_path,
@@ -364,7 +203,6 @@ def render(
     layout_path: Path,
     output: Path,
     index_path: Path | None = None,
-    override_dir: Path | None = None,
 ) -> None:
     """Combine PDFs according to the YAML layout file."""
     try:
@@ -391,27 +229,16 @@ def render(
 
     libraries = load_project_libraries(layout_path.parent)
 
-    # Extract config entries and legacy override directory
     layout_entries: list[SectionEntry | FileEntry] = []
     for record in layout.root:
         if isinstance(record, ConfigEntry):
             for library_record in record.config:
                 libraries.add(library_record.load(layout_path.parent))
-        elif isinstance(record, OverrideConfigEntry):
-            override_dir = resolve_path(record.override, layout_path.parent)
         else:
-            # Keep non-config entries for processing
             layout_entries.append(record)
 
-    # Get the directory of the YAML file for resolving relative paths
     default_dir = layout_path.parent.resolve()
-    # By default, treat the layout file directory as the override directory.
-    # This means PDFs next to the YAML (e.g., handouts) take precedence over
-    # indexed songbooks when a `title:` is provided without an explicit `file:`.
-    if override_dir is None:
-        override_dir = default_dir
 
-    # Open index if it exists (for title lookups)
     index: Index | None = None
     if index_path and index_path.exists():
         index = Index(index_path)
@@ -429,8 +256,6 @@ def render(
                     default_dir,
                     composer,
                     index,
-                    override_dir,
-                    layout_path,
                     libraries,
                 )
                 print(result.format())

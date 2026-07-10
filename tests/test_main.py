@@ -19,8 +19,8 @@ def test_index_command_builds_default_index(monkeypatch) -> None:
 def test_render_command_uses_default_output(monkeypatch) -> None:
     calls = []
 
-    def render(layout: Path, output: Path, index_path: Path, override_dir: Path | None):
-        calls.append((layout, output, index_path, override_dir))
+    def render(layout: Path, output: Path, index_path: Path):
+        calls.append((layout, output, index_path))
 
     monkeypatch.setattr(cli, "render", render)
 
@@ -31,7 +31,6 @@ def test_render_command_uses_default_output(monkeypatch) -> None:
             Path("setlists/favorites.yaml"),
             Path("setlists/favorites.pdf"),
             cli.DEFAULT_INDEX_PATH,
-            None,
         )
     ]
 
@@ -39,8 +38,8 @@ def test_render_command_uses_default_output(monkeypatch) -> None:
 def test_render_command_accepts_options(monkeypatch) -> None:
     calls = []
 
-    def render(layout: Path, output: Path, index_path: Path, override_dir: Path | None):
-        calls.append((layout, output, index_path, override_dir))
+    def render(layout: Path, output: Path, index_path: Path):
+        calls.append((layout, output, index_path))
 
     monkeypatch.setattr(cli, "render", render)
 
@@ -52,8 +51,6 @@ def test_render_command_accepts_options(monkeypatch) -> None:
             "book.pdf",
             "--index",
             "index.sqlite",
-            "--override",
-            "handouts",
         ]
     )
 
@@ -62,7 +59,6 @@ def test_render_command_accepts_options(monkeypatch) -> None:
             Path("favorites.yaml"),
             Path("book.pdf"),
             Path("index.sqlite"),
-            Path("handouts"),
         )
     ]
 

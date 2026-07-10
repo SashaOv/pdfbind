@@ -38,17 +38,10 @@ def render_command(
             help=f"Path to the index SQLite file (default: {DEFAULT_INDEX_PATH})",
         ),
     ] = DEFAULT_INDEX_PATH,
-    override: Annotated[
-        Path | None,
-        Parameter(
-            "--override",
-            help="Override directory: if <title>.pdf exists here, use it instead of index lookup",
-        ),
-    ] = None,
 ) -> None:
     """Render a PDF setbook from a YAML layout file."""
     output_path = output if output else layout.with_name(f"{layout.stem}.pdf")
-    render(layout, output_path, index, override)
+    render(layout, output_path, index)
 
 
 @app.command(name="lookup")

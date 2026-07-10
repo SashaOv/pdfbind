@@ -161,7 +161,7 @@ override workflows disappear from the CLI, runtime, and documentation.
 
 ### Patches
 
-- [ ] **P1 — Replace override inputs with library ordering.** Remove the layout
+- [x] **P1 — Replace override inputs with library ordering.** Remove the layout
   `override` record, `--override`, and override-specific rendering paths.
   Preserve local-handout priority through ordered directory-library records.
   Verify render and CLI tests.
