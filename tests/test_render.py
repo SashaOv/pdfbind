@@ -7,7 +7,6 @@ import pytest
 import yaml
 
 from tunery.composer import copy_pages, get_page_label_to_index_map
-from tunery.index import Index
 from tunery.render import render
 
 
@@ -301,25 +300,15 @@ def test_render_prefers_layout_library_over_index(tmp_path: Path) -> None:
     layout_dir.mkdir()
 
     create_pdf(layout_dir / "Country.pdf", 1)
-
-    books_dir = tmp_path / "books"
-    books_dir.mkdir()
-    create_pdf(books_dir / "RealBook.pdf", 3)
-
+    create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        [
-            {"title": "Country", "page": 2, "pages": 2},
-        ],
+        {
+            "source": "books/RealBook.pdf",
+            "tunes": [{"title": "Country", "page": 2, "pages": 2}],
+        },
     )
-    write_json(
-        tmp_path / "index.json",
-        [
-            {"source": "books/RealBook.pdf", "index": "book.json"},
-        ],
-    )
-    index_path = tmp_path / "index.sqlite"
-    Index.build(tmp_path / "index.json", index_path).close()
+    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
 
     layout_path = write_layout(
         layout_dir / "combo.yaml",
@@ -330,7 +319,7 @@ def test_render_prefers_layout_library_over_index(tmp_path: Path) -> None:
     )
     output_path = layout_dir / "combined.pdf"
 
-    render(layout_path, output_path, index_path=index_path)
+    render(layout_path, output_path)
 
     with pikepdf.Pdf.open(output_path) as merged:
         assert len(merged.pages) == 1
@@ -343,25 +332,15 @@ def test_render_later_layout_library_takes_priority_over_index(tmp_path: Path) -
     handouts_dir = tmp_path / "handouts"
     handouts_dir.mkdir()
     create_pdf(handouts_dir / "Country.pdf", 1)
-
-    books_dir = tmp_path / "books"
-    books_dir.mkdir()
-    create_pdf(books_dir / "RealBook.pdf", 3)
-
+    create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        [
-            {"title": "Country", "page": 2, "pages": 2},
-        ],
+        {
+            "source": "books/RealBook.pdf",
+            "tunes": [{"title": "Country", "page": 2, "pages": 2}],
+        },
     )
-    write_json(
-        tmp_path / "index.json",
-        [
-            {"source": "books/RealBook.pdf", "index": "book.json"},
-        ],
-    )
-    index_path = tmp_path / "index.sqlite"
-    Index.build(tmp_path / "index.json", index_path).close()
+    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
 
     layout_path = write_layout(
         layout_dir / "combo.yaml",
@@ -372,7 +351,7 @@ def test_render_later_layout_library_takes_priority_over_index(tmp_path: Path) -
     )
     output_path = layout_dir / "combined.pdf"
 
-    render(layout_path, output_path, index_path=index_path)
+    render(layout_path, output_path)
 
     with pikepdf.Pdf.open(output_path) as merged:
         assert len(merged.pages) == 1
@@ -383,25 +362,15 @@ def test_render_directory_library_defaults_to_full_pdf(tmp_path: Path) -> None:
     layout_dir.mkdir()
 
     create_pdf(layout_dir / "Country.pdf", 9)
-
-    books_dir = tmp_path / "books"
-    books_dir.mkdir()
-    create_pdf(books_dir / "RealBook.pdf", 3)
-
+    create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        [
-            {"title": "Country", "page": 2, "pages": 2},
-        ],
+        {
+            "source": "books/RealBook.pdf",
+            "tunes": [{"title": "Country", "page": 2, "pages": 2}],
+        },
     )
-    write_json(
-        tmp_path / "index.json",
-        [
-            {"source": "books/RealBook.pdf", "index": "book.json"},
-        ],
-    )
-    index_path = tmp_path / "index.sqlite"
-    Index.build(tmp_path / "index.json", index_path).close()
+    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
 
     layout_path = write_layout(
         layout_dir / "combo.yaml",
@@ -412,7 +381,7 @@ def test_render_directory_library_defaults_to_full_pdf(tmp_path: Path) -> None:
     )
     output_path = layout_dir / "combined.pdf"
 
-    render(layout_path, output_path, index_path=index_path)
+    render(layout_path, output_path)
 
     with pikepdf.Pdf.open(output_path) as merged:
         assert len(merged.pages) == 9
@@ -622,7 +591,6 @@ def test_process_file_entry_returns_not_found_result(tmp_path: Path) -> None:
         entry,
         default_dir=layout_dir,
         composer=composer,
-        index=None,
     )
     composer.close()
 
@@ -632,149 +600,88 @@ def test_process_file_entry_returns_not_found_result(tmp_path: Path) -> None:
     assert 'not found "Missing Song"' in result.format()
 
 
-def test_lookup_and_extract_single_match(tmp_path: Path, capsys) -> None:
-    """Test lookup_and_extract with a single matching title."""
+def test_lookup_and_extract_single_match(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tunery.render import lookup_and_extract
 
-    # Create a source PDF
-    source_dir = tmp_path / "books"
-    source_dir.mkdir()
-    source_pdf = create_pdf(source_dir / "RealBook.pdf", 5)
-
-    # Create index
+    create_pdf(tmp_path / "books" / "RealBook.pdf", 5)
     write_json(
         tmp_path / "book.json",
-        [
-            {"title": "Autumn Leaves", "page": 2, "pages": 2},
-            {"title": "Blue In Green", "page": 4, "pages": 1},
-        ],
+        {
+            "source": "books/RealBook.pdf",
+            "tunes": [
+                {"title": "Autumn Leaves", "page": 2, "pages": 2},
+                {"title": "Blue In Green", "page": 4},
+            ],
+        },
     )
-    write_json(
-        tmp_path / "index.json",
-        [{"source": "books/RealBook.pdf", "index": "book.json"}],
-    )
-    index_path = tmp_path / "index.sqlite"
-    Index.build(tmp_path / "index.json", index_path).close()
+    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    monkeypatch.chdir(tmp_path)
 
-    # Run lookup with exact title
     output_path = tmp_path / "output.pdf"
-    lookup_and_extract("Autumn Leaves", output_path, index_path)
+    lookup_and_extract("Autumn Leaves", output_path)
 
-    # Check output
     captured = capsys.readouterr()
     assert 'Found "Autumn Leaves"' in captured.out
     assert "Extracted to:" in captured.out
 
-    # Check the PDF was created with correct number of pages
     assert output_path.exists()
     with pikepdf.Pdf.open(output_path) as pdf:
         assert len(pdf.pages) == 2
 
 
-def test_lookup_and_extract_multiple_matches(tmp_path: Path, capsys) -> None:
-    """Test lookup_and_extract lists multiple matches without extracting."""
+def test_lookup_and_extract_no_matches(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tunery.render import lookup_and_extract
 
-    # Create a source PDF
-    source_dir = tmp_path / "books"
-    source_dir.mkdir()
-    create_pdf(source_dir / "RealBook.pdf", 10)
-
-    # Create index with similar titles
+    create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        [
-            {"title": "Blue In Green", "page": 1, "pages": 1},
-            {"title": "Blue Monk", "page": 3, "pages": 2},
-            {"title": "Blue Train", "page": 5, "pages": 1},
-        ],
+        {
+            "source": "books/RealBook.pdf",
+            "tunes": [{"title": "Autumn Leaves", "page": 1}],
+        },
     )
-    write_json(
-        tmp_path / "index.json",
-        [{"source": "books/RealBook.pdf", "index": "book.json"}],
-    )
-    index_path = tmp_path / "index.sqlite"
-    Index.build(tmp_path / "index.json", index_path).close()
+    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    monkeypatch.chdir(tmp_path)
 
-    # Run lookup with partial title that matches multiple
     output_path = tmp_path / "output.pdf"
-    lookup_and_extract("Blue", output_path, index_path)
+    lookup_and_extract("Nonexistent Song", output_path)
 
-    # Check output lists matches
-    captured = capsys.readouterr()
-    assert "Found 3 matches" in captured.out
-    assert "blue in green" in captured.out
-    assert "blue monk" in captured.out
-    assert "blue train" in captured.out
-    assert "Run again with exact title to extract" in captured.out
-
-    # No PDF should be created
-    assert not output_path.exists()
-
-
-def test_lookup_and_extract_no_matches(tmp_path: Path, capsys) -> None:
-    """Test lookup_and_extract with no matching title."""
-    from tunery.render import lookup_and_extract
-
-    # Create a source PDF
-    source_dir = tmp_path / "books"
-    source_dir.mkdir()
-    create_pdf(source_dir / "RealBook.pdf", 3)
-
-    # Create index
-    write_json(
-        tmp_path / "book.json",
-        [{"title": "Autumn Leaves", "page": 1, "pages": 1}],
-    )
-    write_json(
-        tmp_path / "index.json",
-        [{"source": "books/RealBook.pdf", "index": "book.json"}],
-    )
-    index_path = tmp_path / "index.sqlite"
-    Index.build(tmp_path / "index.json", index_path).close()
-
-    # Run lookup with non-existent title
-    output_path = tmp_path / "output.pdf"
-    lookup_and_extract("Nonexistent Song", output_path, index_path)
-
-    # Check output
     captured = capsys.readouterr()
     assert 'No matches found for "Nonexistent Song"' in captured.out
-
-    # No PDF should be created
     assert not output_path.exists()
 
 
-def test_lookup_and_extract_output_directory(tmp_path: Path, capsys) -> None:
-    """Test lookup_and_extract with output as directory."""
+def test_lookup_and_extract_output_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tunery.render import lookup_and_extract
 
-    # Create a source PDF
-    source_dir = tmp_path / "books"
-    source_dir.mkdir()
-    create_pdf(source_dir / "RealBook.pdf", 3)
-
-    # Create index
+    create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        [{"title": "Autumn Leaves", "page": 1, "pages": 2}],
+        {
+            "source": "books/RealBook.pdf",
+            "tunes": [{"title": "Autumn Leaves", "page": 1, "pages": 2}],
+        },
     )
-    write_json(
-        tmp_path / "index.json",
-        [{"source": "books/RealBook.pdf", "index": "book.json"}],
-    )
-    index_path = tmp_path / "index.sqlite"
-    Index.build(tmp_path / "index.json", index_path).close()
+    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    monkeypatch.chdir(tmp_path)
 
-    # Create output directory
     output_dir = tmp_path / "output"
     output_dir.mkdir()
 
-    # Run lookup with directory as output
-    lookup_and_extract("Autumn Leaves", output_dir, index_path)
+    lookup_and_extract("Autumn Leaves", output_dir)
 
-    # Check the PDF was created in the directory with matched title
-    expected_path = output_dir / "autumn leaves.pdf"
+    expected_path = output_dir / "Autumn Leaves.pdf"
     assert expected_path.exists()
     with pikepdf.Pdf.open(expected_path) as pdf:
         assert len(pdf.pages) == 2

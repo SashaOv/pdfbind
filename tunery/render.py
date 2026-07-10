@@ -8,7 +8,6 @@ import yaml
 from pydantic import BaseModel, Field, PositiveInt, RootModel, ValidationError
 
 from tunery.composer import Composer
-from tunery.index import ChartMatch, Index
 from tunery.library import (
     LibraryCollection,
     LibraryRecord,
@@ -20,7 +19,7 @@ class FileEntry(BaseModel):
     """A file entry specifying a PDF source and optional page range/notes.
 
     Either 'file' or 'title' must be provided. If only 'title' is provided,
-    the file will be looked up in the index.
+    the file will be looked up in configured libraries.
     """
 
     file: str | None = None
@@ -105,7 +104,6 @@ def process_file_entry(
     entry: FileEntry,
     default_dir: Path,
     composer: Composer,
-    index: Index | None = None,
     libraries: LibraryCollection | None = None,
 ) -> ProcessEntryResult:
     """
@@ -145,41 +143,7 @@ def process_file_entry(
                 matched_title = library_match.title
                 score = library_match.score
         else:
-            if index is None:
-                return NotFoundResult(title=title)
-
-            location = index.lookup(title)
-            exact_match = location is not None
-            index_fuzzy_match: ChartMatch | None = None
-            if not location:
-                fuzzy_matches = index.lookup_fuzzy_edit_distance(
-                    title, score_cutoff=90, limit=1
-                )
-                if fuzzy_matches:
-                    index_fuzzy_match = fuzzy_matches[0]
-                    location = index_fuzzy_match.location
-
-            if not location:
-                fuzzy_matches = index.lookup_fuzzy_edit_distance(
-                    title, score_cutoff=70, limit=1
-                )
-                if fuzzy_matches:
-                    hint_match = fuzzy_matches[0]
-                    hint_title = hint_match.matched_title
-                    hint_source = Path(hint_match.location.source_path).stem
-                    hint = f'Is this "{hint_title}" in "{hint_source}"?'
-                else:
-                    hint = None
-                return NotFoundResult(title=title, hint=hint)
-
-            input_pdf_path = Path(location.source_path)
-            source = input_pdf_path.stem
-            if not exact_match:
-                assert index_fuzzy_match is not None
-                matched_title = index_fuzzy_match.matched_title
-                score = index_fuzzy_match.score
-            page = entry.page if entry.page is not None else location.page
-            length = entry.length if entry.length is not None else location.length
+            return NotFoundResult(title=title)
 
     entry_page = composer.add(
         title=title,
@@ -202,7 +166,6 @@ def process_file_entry(
 def render(
     layout_path: Path,
     output: Path,
-    index_path: Path | None = None,
 ) -> None:
     """Combine PDFs according to the YAML layout file."""
     try:
@@ -239,10 +202,6 @@ def render(
 
     default_dir = layout_path.parent.resolve()
 
-    index: Index | None = None
-    if index_path and index_path.exists():
-        index = Index(index_path)
-
     def process_items(items: list[SectionEntry | FileEntry]) -> None:
         """Process layout items recursively."""
         for item in items:
@@ -255,114 +214,48 @@ def render(
                     item,
                     default_dir,
                     composer,
-                    index,
                     libraries,
                 )
                 print(result.format())
 
-    try:
-        with Composer(output, autosave=False) as composer:
-            process_items(layout_entries)
-            composer.save()
-    finally:
-        if index:
-            index.close()
+    with Composer(output, autosave=False) as composer:
+        process_items(layout_entries)
+        composer.save()
 
 
 def lookup_and_extract(
     title: str,
     output: Path | None,
-    index_path: Path,
 ) -> None:
     """
-    Look up a title in the index and extract to PDF.
-
-    If multiple matches are found, lists them and exits without extraction.
-    If a single match is found, extracts the pages to the output PDF.
+    Look up a title in configured libraries and extract it to PDF.
 
     Args:
-        title: The title (or part of title) to search for.
+        title: The title to search for.
         output: Output path - if file, use as-is; if directory, save <title>.pdf there;
                 if None, save <title>.pdf in current directory.
-        index_path: Path to the SQLite index file.
     """
     libraries = load_project_libraries()
     library_match = libraries.lookup_title(title)
-    if library_match is not None:
-        matched_title = library_match.title
-        output_path = (
-            Path(f"{matched_title}.pdf")
-            if output is None
-            else output / f"{matched_title}.pdf"
-            if output.is_dir()
-            else output
+    if library_match is None:
+        print(f'No matches found for "{title}"')
+        return
+
+    matched_title = library_match.title
+    output_path = (
+        Path(f"{matched_title}.pdf")
+        if output is None
+        else output / f"{matched_title}.pdf"
+        if output.is_dir()
+        else output
+    )
+    print(f'Found "{matched_title}" in "{library_match.source.parent}"')
+    with Composer(output_path, autosave=False) as composer:
+        composer.add(
+            matched_title,
+            library_match.source,
+            start=library_match.page,
+            pages=library_match.length,
         )
-        print(f'Found "{matched_title}" in "{library_match.source.parent}"')
-        with Composer(output_path, autosave=False) as composer:
-            composer.add(
-                matched_title,
-                library_match.source,
-                start=library_match.page,
-                pages=library_match.length,
-            )
-            composer.save()
-        print(f"Extracted to: {output_path}")
-        return
-
-    if not index_path.exists():
-        print(f"Index not found: {index_path}")
-        print("Run 'tunery index <index.json>' first to build the index.")
-        return
-
-    with Index(index_path) as index:
-        # First try exact match
-        exact_location = index.lookup(title)
-        if exact_location:
-            # Single exact match - extract it
-            matched_title = title
-            location = exact_location
-        else:
-            # Try fuzzy matching
-            matches = index.lookup_fuzzy_edit_distance(title, score_cutoff=70, limit=10)
-
-            if not matches:
-                print(f'No matches found for "{title}"')
-                return
-
-            if len(matches) > 1:
-                # Multiple matches - list them and exit
-                print(f'Found {len(matches)} matches for "{title}":')
-                for i, match in enumerate(matches, 1):
-                    source_name = Path(match.location.source_path).stem
-                    pages_str = f"{match.location.length} page" if match.location.length == 1 else f"{match.location.length} pages"
-                    print(f'  {i}. "{match.matched_title}" in "{source_name}" (page {match.location.page}, {pages_str}) - {match.score:.0f}%')
-                print("Run again with exact title to extract.")
-                return
-
-            # Single fuzzy match
-            matched_title = matches[0].matched_title
-            location = matches[0].location
-
-        # Determine output path
-        if output is None:
-            output_path = Path(f"{matched_title}.pdf")
-        elif output.is_dir():
-            output_path = output / f"{matched_title}.pdf"
-        else:
-            output_path = output
-
-        # Extract pages
-        source_name = Path(location.source_path).stem
-        pages_str = f"{location.length} page" if location.length == 1 else f"{location.length} pages"
-        print(f'Found "{matched_title}" in "{source_name}" (page {location.page}, {pages_str})')
-
-        with Composer(output_path, autosave=False) as composer:
-            composer.add(
-                matched_title,
-                Path(location.source_path),
-                start=location.page,
-                pages=location.length,
-            )
-            composer.save()
-
-        print(f"Extracted to: {output_path}")
+        composer.save()
+    print(f"Extracted to: {output_path}")

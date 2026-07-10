@@ -165,11 +165,12 @@ override workflows disappear from the CLI, runtime, and documentation.
   `override` record, `--override`, and override-specific rendering paths.
   Preserve local-handout priority through ordered directory-library records.
   Verify render and CLI tests.
-- [ ] **P2 — Retire the SQLite index pipeline.** Remove the `index` command,
+- [x] **P2 — Retire the SQLite index pipeline.** Remove the `index` command,
   `--index`, SQLite fallback paths, `tunery/index.py`, and obsolete index tests.
   Make `lookup` use discovered libraries exclusively while preserving
   output-path and multiple-title behavior. Verify CLI, library, and render tests
-  plus a repository scan for runtime SQLite references.
+  plus a repository scan for runtime SQLite references. Keep at least one lookup
+  title required instead of exposing the CLI framework's empty-list option.
 - [ ] **P3 — Document the library-only workflow.** Update the README and root
   spec with `tunery.yaml`, layout library records, lookup precedence, and direct
   JSON-index loading; remove database-building instructions. Run the full

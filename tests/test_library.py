@@ -72,7 +72,7 @@ def test_lookup_extracts_from_discovered_directory_library(
     monkeypatch.chdir(tmp_path)
     output = tmp_path / "result.pdf"
 
-    lookup_and_extract("Blue Monk", output, tmp_path / "missing.sqlite")
+    lookup_and_extract("Blue Monk", output)
 
     assert chart.exists()
     with pikepdf.Pdf.open(output) as pdf:
