@@ -11,6 +11,11 @@ from rapidfuzz import fuzz, process
 
 from tunery.composer import Composer
 from tunery.index import ChartMatch, Index
+from tunery.library import (
+    LibraryCollection,
+    LibraryRecord,
+    load_project_libraries,
+)
 
 
 class FileEntry(BaseModel):
@@ -39,12 +44,20 @@ class SectionEntry(BaseModel):
 
 
 class ConfigEntry(BaseModel):
-    """Configuration entry specifying override directory."""
+    """Configuration entry adding libraries for subsequent lookup."""
+
+    config: list[LibraryRecord]
+
+
+class OverrideConfigEntry(BaseModel):
+    """Legacy configuration entry specifying an override directory."""
 
     override: str
 
 
-class Layout(RootModel[List[ConfigEntry | SectionEntry | FileEntry]]):
+class Layout(
+    RootModel[List[ConfigEntry | OverrideConfigEntry | SectionEntry | FileEntry]]
+):
     """The complete layout schema - a list of config, sections, and/or file entries."""
 
     pass
@@ -105,6 +118,7 @@ def process_file_entry(
     index: Index | None = None,
     override_dir: Path | None = None,
     layout_path: Path | None = None,
+    libraries: LibraryCollection | None = None,
 ) -> ProcessEntryResult:
     """
     Add the requested pages for an entry to the combined PDF.
@@ -118,8 +132,12 @@ def process_file_entry(
     matched_title: str | None = None
     score: float | None = None
     if entry.file:
-        # File is explicitly specified
-        input_pdf_path = resolve_path(entry.file, default_dir)
+        library_match = libraries.lookup_file(entry.file) if libraries else None
+        input_pdf_path = (
+            library_match.source
+            if library_match is not None
+            else resolve_path(entry.file, default_dir)
+        )
         title = entry.title if entry.title else input_pdf_path.stem
         page = entry.page
         length = entry.length
@@ -130,10 +148,26 @@ def process_file_entry(
             raise ValueError("Entry must have either 'file' or 'title'")
         
         title = entry.title
+
+        library_match = libraries.lookup_title(title) if libraries else None
+        if library_match is not None:
+            input_pdf_path = library_match.source
+            page = entry.page if entry.page is not None else library_match.page
+            length = (
+                entry.length if entry.length is not None else library_match.length
+            )
+            source = str(input_pdf_path.parent)
+            if library_match.score is not None:
+                matched_title = library_match.title
+                score = library_match.score
+        else:
+            input_pdf_path = None
         
         # Check override directory first if specified
         override_fuzzy_match: tuple[str, float] | None = None  # (matched_filename, score)
-        if override_dir and override_dir.exists():
+        if input_pdf_path is not None:
+            pass
+        elif override_dir and override_dir.exists():
             # Try exact match first
             override_file = override_dir / f"{title}.pdf"
             if not override_file.exists():
@@ -355,11 +389,15 @@ def render(
         error_msg = f"Validation error in {layout_path}:\n{e}"
         raise ValueError(error_msg) from e
 
-    # Extract config entries and override directory
+    libraries = load_project_libraries(layout_path.parent)
+
+    # Extract config entries and legacy override directory
     layout_entries: list[SectionEntry | FileEntry] = []
     for record in layout.root:
         if isinstance(record, ConfigEntry):
-            # Override from YAML takes precedence over command line
+            for library_record in record.config:
+                libraries.add(library_record.load(layout_path.parent))
+        elif isinstance(record, OverrideConfigEntry):
             override_dir = resolve_path(record.override, layout_path.parent)
         else:
             # Keep non-config entries for processing
@@ -387,7 +425,13 @@ def render(
                 composer.end_section()
             else:
                 result = process_file_entry(
-                    item, default_dir, composer, index, override_dir, layout_path
+                    item,
+                    default_dir,
+                    composer,
+                    index,
+                    override_dir,
+                    layout_path,
+                    libraries,
                 )
                 print(result.format())
 
@@ -417,6 +461,29 @@ def lookup_and_extract(
                 if None, save <title>.pdf in current directory.
         index_path: Path to the SQLite index file.
     """
+    libraries = load_project_libraries()
+    library_match = libraries.lookup_title(title)
+    if library_match is not None:
+        matched_title = library_match.title
+        output_path = (
+            Path(f"{matched_title}.pdf")
+            if output is None
+            else output / f"{matched_title}.pdf"
+            if output.is_dir()
+            else output
+        )
+        print(f'Found "{matched_title}" in "{library_match.source.parent}"')
+        with Composer(output_path, autosave=False) as composer:
+            composer.add(
+                matched_title,
+                library_match.source,
+                start=library_match.page,
+                pages=library_match.length,
+            )
+            composer.save()
+        print(f"Extracted to: {output_path}")
+        return
+
     if not index_path.exists():
         print(f"Index not found: {index_path}")
         print("Run 'tunery index <index.json>' first to build the index.")

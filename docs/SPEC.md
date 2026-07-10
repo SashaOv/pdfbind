@@ -1,7 +1,23 @@
 # Tunery
 **Goal**: build a single printable PDF “setbook” (setlist booklet) by stitching together pages from a collection of existing sheet-music PDFs.
 
-**Method**: Use YAML “layout” that references charts either by explicit file path or by title, resolved via file lookup and/or index. **Index** is a local SQLite index of chart titles → (PDF file, page, page-count), built from a set of existing files (books).
+## Concepts
+
+### Layout
+References charts either by explicit file path or by title, resolved via file lookup and/or index.
+
+### Index
+Is a local SQLite index of chart titles → (PDF file, page, page-count), built from a set of existing files (books).
+
+### Library
+A set of tunes. Types of libraries:
+
+- Directory. A tune is searched by file name $tune_name.pdf
+- Indexed PDF: a PDF file + JSON index which maps tunes to pages in file.
+- Collection of indexed PDFs
+
+Search in library could be **exact**, by exact name, or **fuzzy**, using fuzzy search algorithms.
+
 
 ## Deployable
 `tunery` — CLI

@@ -5,10 +5,9 @@ from typing import Annotated, Sequence
 
 from cyclopts import App, Parameter
 
+import tunery.render as render_module
 from tunery.index import Index
-from tunery.render import render, lookup_and_extract
-
-
+from tunery.render import render
 
 DEFAULT_INDEX_PATH = Path.home() / ".cache" / "tunery" / "index.sqlite"
 app = App(help="Tunery: Build PDF setbooks from sheet music collections")
@@ -76,7 +75,7 @@ def lookup_command(
     """Look up titles in the index and extract them to PDF."""
 
     for item in title:
-        lookup_and_extract(item, output, index)
+        render_module.lookup_and_extract(item, output, index)
 
 
 def main(args: Sequence[str] | None = None) -> None:

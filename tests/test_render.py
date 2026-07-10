@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Sequence
 
@@ -38,6 +39,135 @@ def outline_page_index(pdf: pikepdf.Pdf, outline_item: pikepdf.OutlineItem) -> i
         msg = f"Outline item '{outline_item.title}' is missing a destination"
         raise AssertionError(msg)
     return pdf.pages.index(destination[0])  # pyright: ignore
+
+
+def test_render_resolves_title_and_file_through_layout_directory_library(
+    tmp_path: Path,
+) -> None:
+    library_dir = tmp_path / "library"
+    create_pdf(library_dir / "Autumn Leaves.pdf", 2)
+    create_pdf(library_dir / "Special.pdf", 1)
+    layout_path = tmp_path / "setlist" / "gig.yaml"
+    layout_path.parent.mkdir(parents=True, exist_ok=True)
+    layout_path = write_layout(
+        layout_path,
+        [
+            {"config": [{"library": "../library", "match": "exact"}]},
+            {"title": "Autumn Leaves"},
+            {"file": "Special.pdf"},
+        ],
+    )
+    output_path = tmp_path / "setbook.pdf"
+
+    render(layout_path, output_path)
+
+    with pikepdf.Pdf.open(output_path) as pdf:
+        assert len(pdf.pages) == 3
+
+
+def test_render_discovers_project_config_from_layout_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_dir = tmp_path / "project"
+    chart = create_pdf(project_dir / "Repertoire" / "Bandstand Boogie-Lowden.pdf", 2)
+    project_dir.joinpath("tunery.yaml").write_text(
+        "- library: Repertoire\n  match: exact\n"
+    )
+    layout_dir = project_dir / "setlists" / "gig"
+    layout_dir.mkdir(parents=True)
+    layout_path = write_layout(
+        layout_dir / "setlist.yaml",
+        [{"file": "Bandstand Boogie-Lowden.pdf"}],
+    )
+    unrelated_cwd = tmp_path / "elsewhere"
+    unrelated_cwd.mkdir()
+    monkeypatch.chdir(unrelated_cwd)
+    output_path = tmp_path / "setbook.pdf"
+
+    render(layout_path, output_path)
+
+    assert chart.exists()
+    with pikepdf.Pdf.open(output_path) as pdf:
+        assert len(pdf.pages) == 2
+
+
+def test_render_extracts_pages_from_indexed_pdf_library(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    source = create_pdf(project_dir / "books" / "Real Book.pdf", 6)
+    index_path = project_dir / "indexes" / "real-book.json"
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text(
+        json.dumps(
+            {
+                "source": "../books/Real Book.pdf",
+                "tunes": [{"title": "Autumn Leaves", "page": 3, "pages": 2}],
+            }
+        )
+    )
+    project_dir.joinpath("tunery.yaml").write_text(
+        "- library: indexes/real-book.json\n  match: exact\n"
+    )
+    layout_dir = project_dir / "setlists"
+    layout_dir.mkdir()
+    layout_path = write_layout(layout_dir / "gig.yaml", [{"title": "Autumn Leaves"}])
+    output_path = tmp_path / "setbook.pdf"
+
+    render(layout_path, output_path)
+
+    assert source.exists()
+    with pikepdf.Pdf.open(output_path) as pdf:
+        assert len(pdf.pages) == 2
+
+
+def test_render_loads_indexed_pdf_from_layout_config(tmp_path: Path) -> None:
+    source = create_pdf(tmp_path / "books" / "Real Book.pdf", 4)
+    index_path = tmp_path / "indexes" / "real-book.json"
+    index_path.parent.mkdir()
+    index_path.write_text(
+        json.dumps(
+            {
+                "source": "../books/Real Book.pdf",
+                "tunes": [{"title": "Blue Monk", "page": 2}],
+            }
+        )
+    )
+    layout_dir = tmp_path / "setlists"
+    layout_dir.mkdir()
+    layout_path = write_layout(
+        layout_dir / "gig.yaml",
+        [
+            {"config": [{"library": "../indexes/real-book.json"}]},
+            {"title": "Blue Monk"},
+        ],
+    )
+    output_path = tmp_path / "setbook.pdf"
+
+    render(layout_path, output_path)
+
+    assert source.exists()
+    with pikepdf.Pdf.open(output_path) as pdf:
+        assert len(pdf.pages) == 1
+
+
+def test_render_layout_library_match_mode_is_not_per_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    library_dir = tmp_path / "library"
+    create_pdf(library_dir / "Autumn Leaves.pdf", 1)
+    layout_dir = tmp_path / "setlist"
+    layout_dir.mkdir()
+    layout_path = write_layout(
+        layout_dir / "gig.yaml",
+        [
+            {"config": [{"library": "../library", "match": "exact"}]},
+            {"title": "Autum Leaves"},
+        ],
+    )
+    output_path = tmp_path / "setbook.pdf"
+
+    render(layout_path, output_path)
+
+    assert 'not found "Autum Leaves"' in capsys.readouterr().out
 
 
 def test_bind_pdf_combines_sections_and_flat_entries(tmp_path: Path) -> None:
