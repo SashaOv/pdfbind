@@ -1,5 +1,6 @@
 """PDF rendering logic for combining PDFs with table of contents."""
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -55,11 +56,14 @@ class Layout(RootModel[List[ConfigEntry | SectionEntry | FileEntry]]):
 def resolve_path(path_str: str, base_dir: Path) -> Path:
     """
     Resolve a file path relative to base_dir if it's relative, otherwise return as-is.
+
+    Normalizes lexically without resolving symlinks, so `..` climbs above
+    symlinked parents instead of their targets.
     """
     path = Path(path_str)
     if path.is_absolute():
         return path
-    return (base_dir / path).resolve()
+    return Path(os.path.abspath(base_dir / path))
 
 
 @dataclass
@@ -84,20 +88,29 @@ class NotFoundResult(ProcessEntryResult):
         return msg
 
 
+def format_source_location(source_path: Path, page: int | None = None) -> str:
+    """Format a match location: library directory, source stem, and page if available."""
+    details = source_path.stem
+    if page is not None:
+        details += f", page {page}"
+    return f'"{source_path.parent}" ({details})'
+
+
 @dataclass
 class SuccessResult(ProcessEntryResult):
     """Successfully found and processed a file entry."""
     page: int
     source_path: Path
-    source: str  # display name of the source (book name or directory path)
+    source_page: int | None = None  # starting page within the source PDF
     matched_title: str | None = None  # set if fuzzy matched
     score: float | None = None  # set if fuzzy matched
 
     def format(self) -> str:
+        location = format_source_location(self.source_path, self.source_page)
         if self.matched_title is not None:
-            return f'matched  "{self.title}" with "{self.matched_title}" from {self.source} ({self.score:.0f}%)'
+            return f'matched  "{self.title}" with "{self.matched_title}" from {location} ({self.score:.0f}%)'
         else:
-            return f'found    "{self.title}" in {self.source}'
+            return f'found    "{self.title}" in {location}'
 
 
 def process_file_entry(
@@ -112,7 +125,6 @@ def process_file_entry(
     Returns: SuccessResult on success, NotFoundResult if title not found
              (both subclasses of ProcessEntryResult).
     """
-    source: str
     matched_title: str | None = None
     score: float | None = None
     if entry.file:
@@ -125,7 +137,6 @@ def process_file_entry(
         title = entry.title if entry.title else input_pdf_path.stem
         page = entry.page
         length = entry.length
-        source = str(input_pdf_path.parent)
     else:
         if not entry.title:
             raise ValueError("Entry must have either 'file' or 'title'")
@@ -138,7 +149,6 @@ def process_file_entry(
             length = (
                 entry.length if entry.length is not None else library_match.length
             )
-            source = str(input_pdf_path.parent)
             if library_match.score is not None:
                 matched_title = library_match.title
                 score = library_match.score
@@ -157,7 +167,7 @@ def process_file_entry(
         title=title,
         page=entry_page,
         source_path=input_pdf_path,
-        source=source,
+        source_page=page,
         matched_title=matched_title,
         score=score,
     )
@@ -200,7 +210,7 @@ def render(
         else:
             layout_entries.append(record)
 
-    default_dir = layout_path.parent.resolve()
+    default_dir = Path(os.path.abspath(layout_path.parent))
 
     def process_items(items: list[SectionEntry | FileEntry]) -> None:
         """Process layout items recursively."""
@@ -249,7 +259,8 @@ def lookup_and_extract(
         if output.is_dir()
         else output
     )
-    print(f'Found "{matched_title}" in "{library_match.source.parent}"')
+    location = format_source_location(library_match.source, library_match.page)
+    print(f'Found "{matched_title}" in {location}')
     with Composer(output_path, autosave=False) as composer:
         composer.add(
             matched_title,

@@ -9,26 +9,35 @@ Add an ordered `tunery.yaml` file to the project:
 
 ```yaml
 - library: indexes/real-book.json
+  source: books/Real Book.pdf
+  shift: 0
   match: fuzzy
 - library: handouts
   match: exact
 ```
 
-Paths are relative to `tunery.yaml`. Later libraries have higher lookup
-priority. If no project configuration is found, Tunery uses the starting
-directory as a directory library.
+The `source` field is required for indexed PDF libraries, while `shift` is
+optional and defaults to `0`. Paths are relative to `tunery.yaml`. Later
+libraries have higher lookup priority. If no project configuration is found,
+Tunery uses the starting directory as a directory library.
+
+A `library` may also point to a YAML collection file holding multiple library
+records, with paths resolved relative to that file:
+
+```yaml
+- library: /path/to/rb-index/tunery.yaml
+```
+
+A `match` set on such a reference is a default: inner records that set their
+own `match` win.
 
 An indexed PDF library names one source PDF and its chart ranges:
 
 ```json
-{
-  "source": "../books/Real Book.pdf",
-  "shift": 0,
-  "tunes": [
-    {"title": "Autumn Leaves", "page": 39},
-    {"title": "Song B", "page": 20, "pages": 2}
-  ]
-}
+[
+  {"title": "Autumn Leaves", "page": 39},
+  {"title": "Song B", "page": 20, "pages": 2}
+]
 ```
 
 ## Render a setbook

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 import yaml
-from pydantic import BaseModel, PositiveInt, ValidationError
+from pydantic import BaseModel, PositiveInt, TypeAdapter, ValidationError
 
 from tunery.fuzzy_index import FuzzyIndex, normalize_key
 
@@ -98,10 +98,7 @@ class IndexedTune(BaseModel):
     pages: PositiveInt = 1
 
 
-class IndexedPdfData(BaseModel):
-    source: str
-    shift: int = 0
-    tunes: list[IndexedTune]
+INDEXED_TUNES_ADAPTER = TypeAdapter(list[IndexedTune])
 
 
 class IndexedPdfLibrary:
@@ -132,29 +129,38 @@ class IndexedPdfLibrary:
 
     @classmethod
     def from_json(
-        cls, index_path: Path, *, match: MatchMode = "exact"
+        cls,
+        index_path: Path,
+        source: Path,
+        *,
+        shift: int = 0,
+        match: MatchMode = "exact",
     ) -> "IndexedPdfLibrary":
         resolved_index = index_path.resolve()
         try:
             raw_data = json.loads(resolved_index.read_text(encoding="utf-8"))
-            data = IndexedPdfData.model_validate(raw_data)
+            tunes = INDEXED_TUNES_ADAPTER.validate_python(raw_data)
         except (OSError, json.JSONDecodeError, ValidationError) as error:
             raise ValueError(
                 f"Invalid indexed PDF library {resolved_index}: {error}"
             ) from error
 
-        source = Path(data.source)
-        if not source.is_absolute():
-            source = (resolved_index.parent / source).resolve()
-        if not source.is_file():
+        resolved_source = source.resolve()
+        if not resolved_source.is_file():
             raise ValueError(
-                f"Source PDF not found: {source} (referenced by {resolved_index})"
+                f"Source PDF not found: {resolved_source} "
+                f"(configured for {resolved_index})"
+            )
+        if resolved_source.suffix.lower() != ".pdf":
+            raise ValueError(
+                f"Source must be a PDF: {resolved_source} "
+                f"(configured for {resolved_index})"
             )
         return cls(
             resolved_index,
-            source,
-            data.tunes,
-            shift=data.shift,
+            resolved_source,
+            tunes,
+            shift=shift,
             match=match,
         )
 
@@ -176,7 +182,7 @@ class IndexedPdfLibrary:
             score=score,
         )
 
-    def lookup_file(self, file: str) -> None:
+    def lookup_file(self, file: str) -> LibraryMatch | None:
         return None
 
 
@@ -186,11 +192,13 @@ class LibraryCollection:
 
     @property
     def directories(self) -> list[Path]:
-        return [
-            library.path
-            for library in self._libraries
-            if isinstance(library, DirectoryLibrary)
-        ]
+        result: list[Path] = []
+        for library in self._libraries:
+            if isinstance(library, DirectoryLibrary):
+                result.append(library.path)
+            elif isinstance(library, LibraryCollection):
+                result.extend(library.directories)
+        return result
 
     def add(self, library: Library) -> None:
         self._libraries.append(library)
@@ -212,17 +220,71 @@ class LibraryCollection:
 
 class LibraryRecord(BaseModel):
     library: str
+    source: str | None = None
+    shift: int | None = None
     match: MatchMode = "exact"
 
-    def load(self, base_dir: Path) -> Library:
+    def _load_collection(self, path: Path, seen: tuple[Path, ...]) -> Library:
+        if "source" in self.model_fields_set:
+            raise ValueError(f"Library collection {path} must not specify source")
+        if "shift" in self.model_fields_set:
+            raise ValueError(f"Library collection {path} must not specify shift")
+        if path in seen:
+            chain = " -> ".join(str(p) for p in (*seen, path))
+            raise ValueError(f"Circular library collection include: {chain}")
+        try:
+            raw_collection = yaml.safe_load(path.read_text(encoding="utf-8"))
+            records = [
+                LibraryRecord.model_validate(item) for item in (raw_collection or [])
+            ]
+        except (OSError, yaml.YAMLError, ValidationError, TypeError) as error:
+            raise ValueError(
+                f"Invalid library collection {path}: {error}"
+            ) from error
+        if "match" in self.model_fields_set:
+            records = [
+                record
+                if "match" in record.model_fields_set
+                else record.model_copy(update={"match": self.match})
+                for record in records
+            ]
+        seen = (*seen, path)
+        return LibraryCollection(
+            [record.load(path.parent, seen) for record in records]
+        )
+
+    def load(self, base_dir: Path, _seen: tuple[Path, ...] = ()) -> Library:
         path = Path(self.library)
         if not path.is_absolute():
             path = (base_dir / path).resolve()
+        else:
+            path = path.resolve()
+        if path.suffix.lower() in (".yaml", ".yml") and path.is_file():
+            return self._load_collection(path, _seen)
         if path.is_dir():
+            if "source" in self.model_fields_set:
+                raise ValueError(
+                    f"Directory library {path} must not specify source"
+                )
+            if "shift" in self.model_fields_set:
+                raise ValueError(f"Directory library {path} must not specify shift")
             return DirectoryLibrary(path, match=self.match)
         if path.suffix.lower() == ".json" and path.is_file():
-            return IndexedPdfLibrary.from_json(path, match=self.match)
-        raise ValueError(f"Library path must be a directory or JSON file: {path}")
+            if self.source is None:
+                raise ValueError(f"Indexed PDF library {path} requires source")
+            source = Path(self.source)
+            if not source.is_absolute():
+                source = (base_dir / source).resolve()
+            shift = 0 if self.shift is None else self.shift
+            return IndexedPdfLibrary.from_json(
+                path,
+                source,
+                shift=shift,
+                match=self.match,
+            )
+        raise ValueError(
+            f"Library path must be a directory, JSON file, or YAML file: {path}"
+        )
 
 
 def find_project_config(start_dir: Path) -> Path | None:
@@ -249,6 +311,8 @@ def load_project_libraries(start_dir: Path | None = None) -> LibraryCollection:
     if config_path is None:
         print("Project configuration was not found, using defaults")
         return LibraryCollection([DirectoryLibrary(start)])
+    # Dereference symlinks so relative library/source paths resolve to real files.
+    config_path = config_path.resolve()
 
     try:
         raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))

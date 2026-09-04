@@ -96,15 +96,12 @@ def test_render_extracts_pages_from_indexed_pdf_library(tmp_path: Path) -> None:
     index_path = project_dir / "indexes" / "real-book.json"
     index_path.parent.mkdir(parents=True)
     index_path.write_text(
-        json.dumps(
-            {
-                "source": "../books/Real Book.pdf",
-                "tunes": [{"title": "Autumn Leaves", "page": 3, "pages": 2}],
-            }
-        )
+        json.dumps([{"title": "Autumn Leaves", "page": 3, "pages": 2}])
     )
     project_dir.joinpath("tunery.yaml").write_text(
-        "- library: indexes/real-book.json\n  match: exact\n"
+        "- library: indexes/real-book.json\n"
+        "  source: books/Real Book.pdf\n"
+        "  match: exact\n"
     )
     layout_dir = project_dir / "setlists"
     layout_dir.mkdir()
@@ -123,19 +120,21 @@ def test_render_loads_indexed_pdf_from_layout_config(tmp_path: Path) -> None:
     index_path = tmp_path / "indexes" / "real-book.json"
     index_path.parent.mkdir()
     index_path.write_text(
-        json.dumps(
-            {
-                "source": "../books/Real Book.pdf",
-                "tunes": [{"title": "Blue Monk", "page": 2}],
-            }
-        )
+        json.dumps([{"title": "Blue Monk", "page": 2}])
     )
     layout_dir = tmp_path / "setlists"
     layout_dir.mkdir()
     layout_path = write_layout(
         layout_dir / "gig.yaml",
         [
-            {"config": [{"library": "../indexes/real-book.json"}]},
+            {
+                "config": [
+                    {
+                        "library": "../indexes/real-book.json",
+                        "source": "../books/Real Book.pdf",
+                    }
+                ]
+            },
             {"title": "Blue Monk"},
         ],
     )
@@ -303,12 +302,11 @@ def test_render_prefers_layout_library_over_index(tmp_path: Path) -> None:
     create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        {
-            "source": "books/RealBook.pdf",
-            "tunes": [{"title": "Country", "page": 2, "pages": 2}],
-        },
+        [{"title": "Country", "page": 2, "pages": 2}],
     )
-    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    tmp_path.joinpath("tunery.yaml").write_text(
+        "- library: book.json\n  source: books/RealBook.pdf\n"
+    )
 
     layout_path = write_layout(
         layout_dir / "combo.yaml",
@@ -335,12 +333,11 @@ def test_render_later_layout_library_takes_priority_over_index(tmp_path: Path) -
     create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        {
-            "source": "books/RealBook.pdf",
-            "tunes": [{"title": "Country", "page": 2, "pages": 2}],
-        },
+        [{"title": "Country", "page": 2, "pages": 2}],
     )
-    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    tmp_path.joinpath("tunery.yaml").write_text(
+        "- library: book.json\n  source: books/RealBook.pdf\n"
+    )
 
     layout_path = write_layout(
         layout_dir / "combo.yaml",
@@ -365,12 +362,11 @@ def test_render_directory_library_defaults_to_full_pdf(tmp_path: Path) -> None:
     create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        {
-            "source": "books/RealBook.pdf",
-            "tunes": [{"title": "Country", "page": 2, "pages": 2}],
-        },
+        [{"title": "Country", "page": 2, "pages": 2}],
     )
-    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    tmp_path.joinpath("tunery.yaml").write_text(
+        "- library: book.json\n  source: books/RealBook.pdf\n"
+    )
 
     layout_path = write_layout(
         layout_dir / "combo.yaml",
@@ -610,15 +606,14 @@ def test_lookup_and_extract_single_match(
     create_pdf(tmp_path / "books" / "RealBook.pdf", 5)
     write_json(
         tmp_path / "book.json",
-        {
-            "source": "books/RealBook.pdf",
-            "tunes": [
-                {"title": "Autumn Leaves", "page": 2, "pages": 2},
-                {"title": "Blue In Green", "page": 4},
-            ],
-        },
+        [
+            {"title": "Autumn Leaves", "page": 2, "pages": 2},
+            {"title": "Blue In Green", "page": 4},
+        ],
     )
-    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    tmp_path.joinpath("tunery.yaml").write_text(
+        "- library: book.json\n  source: books/RealBook.pdf\n"
+    )
     monkeypatch.chdir(tmp_path)
 
     output_path = tmp_path / "output.pdf"
@@ -643,12 +638,11 @@ def test_lookup_and_extract_no_matches(
     create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        {
-            "source": "books/RealBook.pdf",
-            "tunes": [{"title": "Autumn Leaves", "page": 1}],
-        },
+        [{"title": "Autumn Leaves", "page": 1}],
     )
-    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    tmp_path.joinpath("tunery.yaml").write_text(
+        "- library: book.json\n  source: books/RealBook.pdf\n"
+    )
     monkeypatch.chdir(tmp_path)
 
     output_path = tmp_path / "output.pdf"
@@ -668,12 +662,11 @@ def test_lookup_and_extract_output_directory(
     create_pdf(tmp_path / "books" / "RealBook.pdf", 3)
     write_json(
         tmp_path / "book.json",
-        {
-            "source": "books/RealBook.pdf",
-            "tunes": [{"title": "Autumn Leaves", "page": 1, "pages": 2}],
-        },
+        [{"title": "Autumn Leaves", "page": 1, "pages": 2}],
     )
-    tmp_path.joinpath("tunery.yaml").write_text("- library: book.json\n")
+    tmp_path.joinpath("tunery.yaml").write_text(
+        "- library: book.json\n  source: books/RealBook.pdf\n"
+    )
     monkeypatch.chdir(tmp_path)
 
     output_dir = tmp_path / "output"
@@ -685,3 +678,26 @@ def test_lookup_and_extract_output_directory(
     assert expected_path.exists()
     with pikepdf.Pdf.open(expected_path) as pdf:
         assert len(pdf.pages) == 2
+
+
+def test_render_resolves_relative_file_through_symlinked_parent(
+    tmp_path: Path,
+) -> None:
+    """Relative file refs resolve lexically when the layout dir is symlinked."""
+    real_gdrive = tmp_path / "real-gdrive"
+    gig_dir = real_gdrive / "Shows" / "gig"
+    gig_dir.mkdir(parents=True)
+    create_pdf(tmp_path / "project" / "Vault" / "chart.pdf", 1)
+    linked_gdrive = tmp_path / "project" / "GDrive"
+    linked_gdrive.parent.mkdir(parents=True, exist_ok=True)
+    linked_gdrive.symlink_to(real_gdrive, target_is_directory=True)
+    layout_path = write_layout(
+        linked_gdrive / "Shows" / "gig" / "gig.yaml",
+        [{"file": "../../../Vault/chart.pdf"}],
+    )
+    output_path = tmp_path / "setbook.pdf"
+
+    render(layout_path, output_path)
+
+    with pikepdf.Pdf.open(output_path) as pdf:
+        assert len(pdf.pages) == 1
